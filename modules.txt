@@ -1,7 +1,7 @@
 % World
   - Logic16
   - NBack
-  - BlockCatch
+  * BlockCatch
   + Test
   - PathFollow
   - TPM_GENERATOR
@@ -17,8 +17,8 @@
 
 % Brain
   - Wire
-  * CGP
-  - Markov
+  * Markov
+  + CGP
   - LSTM
   - BiLog
   - ANN
@@ -29,6 +29,6 @@
 % Optimizer
   - Islands
   - Lexicase
-  + Roulette
   * Tournament
+  + Roulette
 
