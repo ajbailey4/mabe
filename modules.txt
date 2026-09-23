@@ -1,8 +1,8 @@
 % World
   - Logic16
   - NBack
-  * BlockCatch
   + Test
+  * BlockCatch
   - PathFollow
   - TPM_GENERATOR
   - Berry
@@ -29,6 +29,6 @@
 % Optimizer
   - Islands
   - Lexicase
-  * Tournament
   + Roulette
+  * Tournament
 
