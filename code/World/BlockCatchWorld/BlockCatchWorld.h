@@ -58,12 +58,14 @@ public:
 	static std::shared_ptr<ParameterLink<bool>> saveStateToStatePL;
 	static std::shared_ptr<ParameterLink<bool>> save_R_FragMatrixPL;
 	static std::shared_ptr<ParameterLink<bool>> saveFlowMatrixPL;
+	static std::shared_ptr<ParameterLink<bool>> saveBrainActivityPL;
 
 	bool saveFragOverTime;
 	bool saveBrainStructureAndConnectome;
 	bool saveStateToState;
 	bool save_R_FragMatrix;
 	bool saveFlowMatrix;
+	bool saveBrainActivity;
 
 
 	int numberOfSensors = 0;

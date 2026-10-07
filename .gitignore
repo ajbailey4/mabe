@@ -8,3 +8,13 @@ work/
 
 # Ignore python's cache:
 __pycache__/
+
+# Animat runs: results are committed, but MABE logs and intermediate files are not
+animats/*/runs/*/raw/
+
+# Python environment and notebook state
+.venv/
+.ipynb_checkpoints/
+
+# pyphi writes a log file in whatever directory it runs from
+pyphi.log

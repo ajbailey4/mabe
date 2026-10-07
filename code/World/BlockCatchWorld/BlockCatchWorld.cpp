@@ -63,6 +63,10 @@ Parameters::register_parameter("WORLD_BLOCKCATCH_ANALYZE-save_R_FragMatrix", fal
 std::shared_ptr<ParameterLink<bool>> BlockCatchWorld::saveFlowMatrixPL =
 Parameters::register_parameter("WORLD_BLOCKCATCH_ANALYZE-saveFlowMatrix", false,
 	"");
+std::shared_ptr<ParameterLink<bool>> BlockCatchWorld::saveBrainActivityPL =
+Parameters::register_parameter("WORLD_BLOCKCATCH_ANALYZE-saveBrainActivity", false,
+	"if true, save brainActivity_id_<ID>.csv with the full brain state (sensors, motors, hidden) at every update of every trial,\n"
+	"and append ID,score to brainActivity_scores.csv");
 
 
 void BlockCatchWorld::debugDisplay(int worldX, int time, std::vector<std::vector<int>> patternBuffer, int frameIndex, std::vector<int> sensorArray, std::vector<int> gapArray){
@@ -242,6 +246,7 @@ BlockCatchWorld::BlockCatchWorld(std::shared_ptr<ParametersTable> _PT) : Abstrac
 	saveStateToState = saveStateToStatePL->get(PT);
 	save_R_FragMatrix = save_R_FragMatrixPL->get(PT);
 	saveFlowMatrix = saveFlowMatrixPL->get(PT);
+	saveBrainActivity = saveBrainActivityPL->get(PT);
 
 	visualizeBest = visualizeBestPL->get(PT);
 
@@ -839,6 +844,42 @@ void BlockCatchWorld::evaluateSolo(std::shared_ptr<Organism> org, int analyze, i
 			std::vector<std::pair<double, double>> flowRanges = { {0,.25}, {.75,1}, {0,1} };//, { 0,.1 }, { .9,1 }};
 			FRAG::saveFragMatrixSet(TS::Join(brainAfterStateSet, outputStateSet), TS::Join(brainBeforeStateSet, inputStateSet), lifeTimes, flowRanges, "flowMap_id_" + std::to_string(thisID) + ".py", "shared", -1);
 
+		}
+
+		if (saveBrainActivity) {
+			std::cout << "  saving brain activity..." << std::endl;
+			// one row per update: the state of every node at the moment the update reads it.
+			// motors (m*) hold the output of the previous update (0 at the start of each trial, after resetBrain).
+			// hidden is recorded once more per trial than inputs/outputs (the state before the first update),
+			// so hidden is indexed with its own offset.
+			auto rawInputs = brain->getInputStates();
+			auto rawOutputs = brain->getOutputStates();
+			auto rawHidden = brain->getHiddenStates();
+			int nIn = rawInputs.empty() ? 0 : rawInputs[0].size();
+			int nOut = rawOutputs.empty() ? 0 : rawOutputs[0].size();
+			int nHid = rawHidden.empty() ? 0 : rawHidden[0].size();
+			std::string header = "trial,t";
+			for (int i = 0; i < nIn; i++) header += ",s" + std::to_string(i);
+			for (int i = 0; i < nOut; i++) header += ",m" + std::to_string(i);
+			for (int i = 0; i < nHid; i++) header += ",h" + std::to_string(i);
+			std::string fileName = "brainActivity_id_" + std::to_string(thisID) + ".csv";
+			std::string rows = "";
+			int ioOffset = 0;
+			int hiddenOffset = 0;
+			for (int trial = 0; trial < (int)lifeTimes.size(); trial++) {
+				for (int t = 0; t < lifeTimes[trial]; t++) {
+					rows += std::to_string(trial) + "," + std::to_string(t);
+					for (int i = 0; i < nIn; i++) rows += "," + std::to_string(Bit(rawInputs[ioOffset + t][i]));
+					for (int i = 0; i < nOut; i++) rows += "," + std::to_string(t == 0 ? 0 : Bit(rawOutputs[ioOffset + t - 1][i]));
+					for (int i = 0; i < nHid; i++) rows += "," + std::to_string(Bit(rawHidden[hiddenOffset + t][i]));
+					rows += "\n";
+				}
+				ioOffset += lifeTimes[trial];
+				hiddenOffset += lifeTimes[trial] + 1;
+			}
+			FileManager::openAndWriteToFile(fileName, rows.substr(0, rows.size() - 1), header);
+			FileManager::closeFile(fileName);
+			FileManager::openAndWriteToFile("brainActivity_scores.csv", std::to_string(thisID) + "," + std::to_string(org->dataMap.getAverage("score")), "ID,score");
 		}
 
 		std::cout << "  ... analyze done" << std::endl;
