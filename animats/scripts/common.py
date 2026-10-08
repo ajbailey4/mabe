@@ -7,7 +7,7 @@ Layout (see CLAUDE.md):
         LOD_organisms.csv.gz         genomes along the line of descent, every 512 generations
         LOD_data.csv, pop.csv        per-generation stats
         animats.csv                  written by extract.py: one row per sampled animat
-        networks/gen_NNNNN.npz       written by extract.py: TPM, CM, visited states
+        substrates/gen_NNNNN.npz     written by extract.py: TPM, CM, visited states
         raw/                         (gitignored) MABE logs and intermediate files
 """
 

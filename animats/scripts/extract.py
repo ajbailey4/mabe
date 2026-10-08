@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Turn each finished run's line of descent into pyphi-ready networks.
+"""Turn each finished run's line of descent into pyphi-ready substrates.
 
 For every animat in runs/seed_NN/LOD_organisms.csv.gz (one per 512 generations) this:
   1. runs MABE's TPM_GENERATOR world to get the brain's response to every
      (sensor, hidden) state,
   2. reruns the BlockCatch task (analyze mode) to record the brain state at
      every step of all 128 trials,
-  3. writes runs/seed_NN/networks/gen_NNNNN.npz and a summary row in
+  3. writes runs/seed_NN/substrates/gen_NNNNN.npz and a summary row in
      runs/seed_NN/animats.csv.
 
 Contents of each .npz (node order everywhere is MABE's: sensors, motors, hidden,
 labelled S0 S1 M0 M1 H0 H1 H2 H3 for task 1):
-  tpm             (2^N, N) state-by-node TPM, little-endian state index (pyphi's
-                  convention): row = current state, column j = P(node j is on next step)
-  cm              (N, N) connectivity matrix inferred from the TPM: cm[i, j] = 1 if
-                  node i's state can change node j's next state
+  tpm             (2^N, N) state-by-node TPM for pyphi, little-endian state index (pyphi's
+                  convention): row = current state, column j = P(node j is on next step).
+                  Sensor and motor columns are 0.5 (see Conventions).
+  cm              (N, N) connectivity matrix inferred from tpm: cm[i, j] = 1 if node i's
+                  state can change node j's next state
+  motor_tpm       (2^N, n_motors) the brain's real motor outputs for each state
   node_labels     (N,) str
   visited_states  (K, N) distinct states the brain was in during the 128 trials
   visited_counts  (K,) how many time steps each visited state occurred
@@ -25,11 +27,13 @@ labelled S0 S1 M0 M1 H0 H1 H2 H3 for task 1):
 Conventions:
   - A "state" at step t is sensors at t, motors 0, hidden at t. Motors are stored
     as 0 to follow the paper, which zeroes them "after the movement was performed".
-    The brain never reads its motors, so this only affects how states are labelled;
-    the motor output at step t is still in the TPM: tpm[state_t, motor columns].
-  - Motors don't feed back (BRAIN_MARKOV-recurrentOutput = 0), so TPM rows that
-    differ only in motor state are identical.
-  - Nothing inside the brain drives the sensors, so their TPM columns are 0.
+    The brain never reads its motors (BRAIN_MARKOV-recurrentOutput = 0), so TPM rows
+    that differ only in motor state are identical.
+  - Sensor and motor TPM columns are 0.5. Nothing in the brain drives the sensors, and
+    the motors are zeroed every step. With 0 (or real motor outputs) pyphi rejects many
+    visited states as unreachable and silently drops complexes. Any value strictly
+    between 0 and 1 gives identical main complexes and whole-brain concepts (tested
+    0.1-0.9), so 0.5 is a convention, not a modelling choice.
 
 Examples:
     .venv/bin/python animats/scripts/extract.py task1             # all finished seeds
@@ -79,7 +83,7 @@ def build_tpm(tpm_csv):
     for index in range(2 ** n):
         state = [(index >> i) & 1 for i in range(n)]
         key = tuple(-1 if not_read[i] else state[i] for i in range(n))
-        tpm[index] = np.where(not_driven, 0, rows[key])
+        tpm[index] = np.where(not_driven, 0.5, rows[key])
     return tpm, not_read, not_driven
 
 
@@ -141,10 +145,10 @@ def extract(task, seed, force):
     if len(scores) != len(lod) or len(list(raw.glob("TPM_id_*.csv"))) != len(lod):
         raise RuntimeError(f"expected {len(lod)} animats from MABE; see logs in {raw}")
 
-    networks = out / "networks"
-    if networks.exists():
-        shutil.rmtree(networks)
-    networks.mkdir()
+    substrates = out / "substrates"
+    if substrates.exists():
+        shutil.rmtree(substrates)
+    substrates.mkdir()
     summary = []
     for new_id, (mabe_id, generation) in enumerate(lod):
         tpm, not_read, not_driven = build_tpm(raw / f"TPM_id_{new_id}.csv")
@@ -155,17 +159,21 @@ def extract(task, seed, force):
 
         table = np.loadtxt(raw / f"brainActivity_id_{new_id}.csv", delimiter=",", skiprows=1, dtype=int)
         trial, t, activity = table[:, 0], table[:, 1], table[:, 2:]
-        # the check needs the recorded motor outputs, so zero motors only afterwards
+        # the check needs the real motor outputs, so zero motors only afterwards
         mismatches = check_activity_against_tpm(tpm, trial, activity, not_driven)
         if mismatches:
             raise RuntimeError(f"generation {generation}: {mismatches} recorded steps disagree with the TPM")
         activity[:, not_read] = 0
+        tpm_hash = hashlib.sha1(tpm.tobytes()).hexdigest()[:12]
+        n_connections = int(infer_cm(tpm).sum())  # the brain's real wiring, motor inputs included
+        motor_tpm = tpm[:, not_read].copy()
+        tpm[:, not_read] = 0.5
         visited, counts = np.unique(activity, axis=0, return_counts=True)
 
         cm = infer_cm(tpm)
         np.savez_compressed(
-            networks / f"gen_{generation:05d}.npz",
-            tpm=tpm, cm=cm, node_labels=np.array(labels),
+            substrates / f"gen_{generation:05d}.npz",
+            tpm=tpm, cm=cm, motor_tpm=motor_tpm, node_labels=np.array(labels),
             visited_states=visited.astype(np.int8), visited_counts=counts,
             activity=activity.astype(np.int8), activity_trial=trial.astype(np.int16),
             activity_t=t.astype(np.int16),
@@ -173,9 +181,9 @@ def extract(task, seed, force):
         )
         summary.append({
             "generation": generation, "mabe_id": mabe_id, "score": scores[new_id],
-            "n_connections": int(cm.sum()), "n_visited_states": len(visited),
+            "n_connections": n_connections, "n_visited_states": len(visited),
             # identical brains share a hash, so analysis can reuse results across generations
-            "tpm_hash": hashlib.sha1(tpm.tobytes()).hexdigest()[:12],
+            "tpm_hash": tpm_hash,
         })
 
     with open(out / "animats.csv", "w", newline="") as f:

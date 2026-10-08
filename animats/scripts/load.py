@@ -1,21 +1,22 @@
 """Load extracted animats for analysis (e.g. from a notebook).
 
     import sys; sys.path.insert(0, "../scripts")   # from animats/notebooks/
-    from load import list_animats, load_animat, to_network
+    from load import list_animats, load_animat, to_substrate
 
     lod = list_animats("task1", seed=1)            # DataFrame, one row per sampled generation
     a = load_animat("task1", seed=1, generation=59904)
-    net = to_network(a)                             # pyphi.Network
+    substrate = to_substrate(a)                     # pyphi.Substrate
     for state, p in zip(a["visited_states"], a["visited_probs"]):
         ...                                         # state-dependent measure, weighted by p
 
-Only to_network() imports pyphi, so everything else works without it installed.
+Only to_substrate() imports pyphi, so everything else works without it installed.
 """
 
 import json
 
 import numpy as np
 import pandas as pd
+import pyphi
 
 from common import existing_seeds, seed_dir
 
@@ -51,7 +52,7 @@ def load_animat(task, seed, generation):
 
     Adds visited_probs = visited_counts / total steps, for weighting by probability of occurrence.
     """
-    path = seed_dir(task, seed) / "networks" / f"gen_{generation:05d}.npz"
+    path = seed_dir(task, seed) / "substrates" / f"gen_{generation:05d}.npz"
     with np.load(path) as data:
         a = {k: (data[k].item() if data[k].ndim == 0 else data[k]) for k in data.files}
     a["node_labels"] = [str(x) for x in a["node_labels"]]
@@ -59,7 +60,6 @@ def load_animat(task, seed, generation):
     return a
 
 
-def to_network(animat):
-    """A pyphi.Network built from the animat's TPM, connectivity matrix and node labels."""
-    import pyphi
-    return pyphi.Network(animat["tpm"], cm=animat["cm"], node_labels=animat["node_labels"])
+def to_substrate(animat):
+    """A pyphi.Substrate built from the animat's TPM, connectivity matrix and node labels."""
+    return pyphi.Substrate(animat["tpm"], cm=animat["cm"], node_labels=animat["node_labels"])
