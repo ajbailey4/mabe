@@ -1,7 +1,8 @@
 """Paths and helpers shared by evolve.py, extract.py and load.py.
 
 Layout (see CLAUDE.md):
-    animats/<task>/configs/          settings.cfg, settings_world.cfg, settings_organism.cfg
+    animats/configs/                 settings.cfg, settings_organism.cfg, shared by all tasks
+    animats/<task>/configs/          settings_world.cfg; a file here overrides the shared one
     animats/<task>/runs/seed_NN/     one evolutionary run per seed
         run_info.json                written by evolve.py when the run finishes
         LOD_organisms.csv.gz         genomes along the line of descent, every 512 generations
@@ -18,6 +19,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 ANIMATS = REPO / "animats"
 MABE = REPO / "work" / "mabe"
+SHARED_CONFIGS = ANIMATS / "configs"
 CONFIG_FILES = ("settings.cfg", "settings_world.cfg", "settings_organism.cfg")
 
 
@@ -33,13 +35,17 @@ def seed_dir(task, seed):
     return runs_dir(task) / f"seed_{seed:02d}"
 
 
+def config_path(task, name):
+    """A task's own copy of a config file if it has one, else the shared one."""
+    for p in (task_dir(task) / "configs" / name, SHARED_CONFIGS / name):
+        if p.exists():
+            return p
+    raise FileNotFoundError(f"{name} in neither {task_dir(task) / 'configs'} nor {SHARED_CONFIGS}")
+
+
 def config_args(task):
     """The `-f ...` arguments that load a task's config files."""
-    paths = [task_dir(task) / "configs" / name for name in CONFIG_FILES]
-    for p in paths:
-        if not p.exists():
-            raise FileNotFoundError(p)
-    return ["-f", *map(str, paths)]
+    return ["-f", *(str(config_path(task, name)) for name in CONFIG_FILES)]
 
 
 def config_value(task, section, name, file="settings.cfg"):
@@ -49,7 +55,7 @@ def config_value(task, section, name, file="settings.cfg"):
     OPTIMIZER_TOURNAMENT), so the section is required.
     """
     current = None
-    for line in (task_dir(task) / "configs" / file).read_text().splitlines():
+    for line in config_path(task, file).read_text().splitlines():
         if line.startswith("% "):
             current = line[2:].strip()
         elif current == section:
@@ -92,7 +98,11 @@ def run_mabe(args, cwd, log_path):
 
 
 def git_state():
-    """Current commit hash and whether the working tree has uncommitted changes."""
+    """Current commit hash and whether the working tree has uncommitted changes.
+
+    Run outputs are left out, since a running batch creates them itself.
+    """
     def git(*a):
         return subprocess.run(["git", *a], cwd=REPO, capture_output=True, text=True).stdout.strip()
-    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+    dirty = git("status", "--porcelain", "--", ".", ":(exclude,glob)animats/*/runs/**")
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(dirty)}

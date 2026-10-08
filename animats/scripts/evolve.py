@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from common import REPO, config_args, config_value, git_state, parse_seeds, run_mabe, seed_dir
 
 
-def evolve(task, seed, updates, force, progress):
+def evolve(task, seed, updates, force, progress, git):
     out = seed_dir(task, seed)
     if (out / "run_info.json").exists() and not force:
         return "skipped (already finished)"
@@ -54,7 +54,7 @@ def evolve(task, seed, updates, force, progress):
         "mabe_args": [a.replace(str(REPO) + "/", "") for a in args],  # repo-relative
         "elapsed_seconds": round(time.time() - start, 1),
         "finished": time.strftime("%Y-%m-%d %H:%M:%S"),
-        **git_state(),
+        **git,  # as at launch, so later edits to the tree don't get attributed to this run
     }
     (out / "run_info.json").write_text(json.dumps(info, indent=2) + "\n")
     return f"done in {hms(info['elapsed_seconds'])}"
@@ -173,14 +173,15 @@ class Progress:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("task", help="task name, e.g. task1 (configs read from animats/<task>/configs/)")
+    parser.add_argument("task", help="task name, e.g. task1 (configs from animats/<task>/configs/, then animats/configs/)")
     parser.add_argument("--seeds", required=True, help="seeds to run, e.g. 1-50 or 1,3,5")
     parser.add_argument("--jobs", type=int, default=1, help="number of runs in parallel (one core each)")
     parser.add_argument("--updates", type=int, help="override GLOBAL-updates (for short test runs)")
     parser.add_argument("--force", action="store_true", help="rerun seeds that already finished")
     args = parser.parse_args()
 
-    if git_state()["dirty"]:
+    git = git_state()
+    if git["dirty"]:
         print("warning: working tree has uncommitted changes; run_info.json records the commit, "
               "so commit config changes before real runs", file=sys.stderr)
 
@@ -192,7 +193,7 @@ def main():
 
     failed = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(evolve, args.task, s, args.updates, args.force, progress): s for s in seeds}
+        futures = {pool.submit(evolve, args.task, s, args.updates, args.force, progress, git): s for s in seeds}
         for f in as_completed(futures):
             seed = futures[f]
             try:

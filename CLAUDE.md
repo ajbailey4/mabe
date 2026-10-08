@@ -66,14 +66,20 @@ enables) and exits without running.
 
 ## Repo layout conventions
 
-- `animats/<task>/configs/` — tracked parameter set for one task (e.g. `animats/task1/configs/`
-  holds `settings.cfg`, `settings_world.cfg`, `settings_organism.cfg`). Hand-tuned settings
-  live and get committed here.
+- `animats/configs/` — `settings.cfg` and `settings_organism.cfg`, shared by all tasks.
+  `animats/<task>/configs/` — that task's `settings_world.cfg` (its block patterns). The
+  scripts take each of the three files from the task's directory if it has one, else from
+  the shared one, so a task variant can override any file. Hand-tuned settings live and get
+  committed here. Runs before the split (task 1) record the old `animats/task1/configs/`
+  paths in `run_info.json`; the effective settings are identical (checked with `-s`).
 - `animats/<task>/runs/seed_NN/` — one evolutionary run per random seed. **Run results are
   committed** so analysis can happen from any device. Only `runs/*/raw/` (MABE console logs
   and intermediate files) is gitignored. If the data gets too large for the main branch, it
   may move to a separate branch or LFS. Check before assuming it's tracked.
 - `animats/scripts/` — the pipeline (see below). `animats/notebooks/` — analysis notebooks.
+  `animats/notebooks/output/` (committed) holds what they compute: per-measure caches of
+  values by `(tpm_hash, state)`, shared across seeds and tasks, plus per-task CSVs and
+  plots. Delete a measure's `<name>_cache.csv` if the measure or `load.to_substrate` changes.
 - `work/` — gitignored: the compiled `mabe` binary (`./mbuild` writes `work/mabe`) and
   ad-hoc scratch runs. Nothing here needs preserving.
 - `.venv/` — gitignored Python environment. Run everything with `uv run`, which finds this
@@ -155,7 +161,7 @@ MABE gotchas found while building this (all handled in extract.py):
   calls the world inside the evolution loop once per generation.
 - MABE's loader merges `X_organisms.csv` with a neighbouring `X_data.csv` by ID and errors
   if the data file is missing any organism. So `ARCHIVIST_LODWAP-dataSequence` must include
-  every `organismsSequence` generation; both are `:512` in the task configs. (MABE's
+  every `organismsSequence` generation; both are `:512` in `animats/configs/settings.cfg`. (MABE's
   default `:100` vs `:1000` doesn't satisfy this.)
 - Loaded organisms get new IDs `0..n-1` in file row order. Output files like
   `TPM_id_<ID>.csv` use the new IDs, not the original ones.
@@ -182,11 +188,18 @@ experienced during the 128 test trials, weighted by probability of occurrence.
 ## Where things currently stand
 
 - **Evolution setup (task 1)**: parameters matched to the paper paragraph by paragraph and
-  committed in `animats/task1/configs/`. See git history for the reasoning behind each value.
+  committed in `animats/configs/` and `animats/task1/configs/`. See git history for the reasoning behind each value.
   The duplication/deletion rate magnitude (per-site vs per-genome) was discussed and left
   as is. Genomes hit the ~20,000-site cap within a few hundred generations under these rates.
 - **Pipeline**: evolve → extract → notebook is built and tested end-to-end on short runs.
   Extracted substrates load into pyphi 2.0 as `pyphi.Substrate` (`load.to_substrate`).
-- **Next**: launch the 50 full task-1 runs, then exploratory analysis in notebooks with
-  pyphi 2.0 (IIT 3.0, IIT 4.0 and other measures). Other tasks from the paper will get
-  their own `animats/<task>/` directories.
+- **Task 1**: all 50 seeds evolved and extracted. `run_info.json` says `dirty: true` for
+  all of them because `git_state()` used to count the runs' own untracked output; fixed
+  since, and the tree was in fact clean at the seeds 13–50 launch.
+- **Tasks 2–4**: share task 1's settings; only the block patterns differ (task 2's avoid
+  patterns duplicated to make 128 trials). Smoke-tested end to end.
+- **Throughput** (Ryzen 5 9600X, 6 cores/12 threads): one full run is ~1.8 h with 6 in
+  parallel, ~3.2–3.6 h with 12–13 in parallel; SMT adds only ~16% throughput. `--jobs 13`
+  splits 38 or 50 seeds into near-equal waves; 50 seeds take ~13.5 h.
+- **Next**: exploratory analysis in notebooks with pyphi 2.0 (IIT 3.0, IIT 4.0 and other
+  measures). The paper's one-sensor Task 1 variant (Fig. 6) is a later candidate.

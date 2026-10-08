@@ -28,7 +28,8 @@ def list_seeds(task):
 
 def list_animats(task, seed):
     """animats.csv for one run: generation, mabe_id, score, n_connections, n_visited_states, tpm_hash."""
-    return pd.read_csv(seed_dir(task, seed) / "animats.csv")
+    # hashes such as 714311276430 or 2155383e3965 would otherwise parse as numbers
+    return pd.read_csv(seed_dir(task, seed) / "animats.csv", dtype={"tpm_hash": str})
 
 
 def all_animats(task):
