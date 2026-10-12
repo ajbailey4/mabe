@@ -1,0 +1,18 @@
+{
+  "task": "task2",
+  "seed": 11,
+  "updates_override": null,
+  "mabe_args": [
+    "-f",
+    "animats/configs/settings.cfg",
+    "animats/task2/configs/settings_world.cfg",
+    "animats/configs/settings_organism.cfg",
+    "-p",
+    "GLOBAL-randomSeed",
+    "11"
+  ],
+  "elapsed_seconds": 12681.9,
+  "finished": "2026-10-08 15:20:25",
+  "commit": "b3b30160c4955f94200f22b0c723bcc52d35f675",
+  "dirty": false
+}
