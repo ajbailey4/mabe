@@ -46,11 +46,10 @@ import gzip
 import hashlib
 import shutil
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
-from common import config_args, existing_seeds, parse_seeds, run_mabe, seed_dir
+from common import config_args, exit_interrupted, existing_seeds, parse_seeds, run_mabe, run_parallel, seed_dir
 
 csv.field_size_limit(sys.maxsize)  # genome columns are very long
 
@@ -205,15 +204,20 @@ def main():
     if not seeds:
         sys.exit("no finished runs found")
     failed = []
-    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(extract, args.task, s, args.force): s for s in seeds}
-        for f in as_completed(futures):
-            try:
-                seed, status = f.result()
-                print(f"seed {seed:02d}: {status}", flush=True)
-            except Exception as e:
-                failed.append(futures[f])
-                print(f"seed {futures[f]:02d}: FAILED: {e}", flush=True)
+
+    def report(seed, result, error):
+        if error:
+            failed.append(seed)
+            print(f"seed {seed:02d}: FAILED: {error}", flush=True)
+        else:
+            print(f"seed {seed:02d}: {result[1]}", flush=True)
+
+    try:
+        run_parallel(lambda s: extract(args.task, s, args.force), seeds, args.jobs, report)
+    except KeyboardInterrupt:
+        # animats.csv is written last, so a seed stopped midway is redone next time
+        print("cancelled", flush=True)
+        exit_interrupted()
     if failed:
         sys.exit(f"failed seeds: {sorted(failed)}")
 

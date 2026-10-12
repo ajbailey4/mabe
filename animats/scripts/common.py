@@ -12,8 +12,13 @@ Layout (see CLAUDE.md):
         raw/                         (gitignored) MABE logs and intermediate files
 """
 
+import os
 import re
+import signal
 import subprocess
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -77,6 +82,19 @@ def parse_seeds(spec):
     return seeds
 
 
+def format_seeds(seeds):
+    """[1, 2, 3, 5, 7, 8] -> '1-3,5,7-8', the inverse of parse_seeds."""
+    parts, seeds = [], sorted(seeds)
+    i = 0
+    while i < len(seeds):
+        j = i
+        while j + 1 < len(seeds) and seeds[j + 1] == seeds[j] + 1:
+            j += 1
+        parts.append(str(seeds[i]) if i == j else f"{seeds[i]}-{seeds[j]}")
+        i = j + 1
+    return ",".join(parts)
+
+
 def existing_seeds(task):
     """Seeds whose evolutionary run has finished."""
     return sorted(
@@ -86,23 +104,86 @@ def existing_seeds(task):
     )
 
 
+# Ctrl-C handling for run_parallel. Once STOPPING is set no new MABE process starts, and the
+# running ones (tracked in _running) are terminated.
+STOPPING = threading.Event()
+_running = set()
+_running_lock = threading.Lock()
+
+
+class Stopped(Exception):
+    """MABE was stopped, or never started, because the batch was cancelled."""
+
+
 def run_mabe(args, cwd, log_path):
     """Run MABE in `cwd` with `args`, sending its console output to `log_path`."""
     if not MABE.exists():
         raise FileNotFoundError(f"{MABE} not found; run ./mbuild from the repo root")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w") as log:
-        result = subprocess.run([str(MABE), *args], cwd=cwd, stdout=log, stderr=subprocess.STDOUT)
-    if result.returncode != 0:
-        raise RuntimeError(f"MABE exited with {result.returncode}; see {log_path}")
+        with _running_lock:
+            if STOPPING.is_set():
+                raise Stopped()
+            proc = subprocess.Popen([str(MABE), *args], cwd=cwd, stdout=log, stderr=subprocess.STDOUT)
+            _running.add(proc)
+        try:
+            returncode = proc.wait()
+        finally:
+            with _running_lock:
+                _running.discard(proc)
+    if -returncode in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        # Ctrl-C reaches MABE as well as Python; set STOPPING here too, so this worker
+        # thread can't start the next seed before the main thread has reacted
+        STOPPING.set()
+        raise Stopped()
+    if returncode != 0:
+        raise RuntimeError(f"MABE exited with {returncode}; see {log_path}")
+
+
+def run_parallel(fn, seeds, jobs, report):
+    """Call fn(seed) for each seed on `jobs` threads, and report(seed, result, error) as each ends.
+
+    On Ctrl-C (or if MABE is killed) seeds not yet started are dropped, running MABE processes
+    are terminated, and KeyboardInterrupt is raised once all workers have stopped.
+    """
+    pool = ThreadPoolExecutor(max_workers=jobs)
+    futures = {pool.submit(fn, seed): seed for seed in seeds}
+    try:
+        for f in as_completed(futures):
+            try:
+                result, error = f.result(), None
+            except Stopped:
+                continue
+            except Exception as e:  # report and carry on with the other seeds
+                result, error = None, e
+            report(futures[f], result, error)
+    except KeyboardInterrupt:
+        STOPPING.set()
+    pool.shutdown(wait=not STOPPING.is_set(), cancel_futures=True)
+    if STOPPING.is_set():
+        with _running_lock:
+            for proc in _running:
+                proc.terminate()
+        pool.shutdown(wait=True)
+        raise KeyboardInterrupt
+
+
+def exit_interrupted():
+    """Exit as if killed by Ctrl-C, so that a shell loop running this script stops too."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 def git_state():
     """Current commit hash and whether the working tree has uncommitted changes.
 
-    Run outputs are left out, since a running batch creates them itself.
+    Run outputs and notebooks are left out: a running batch creates the former itself, and
+    neither affects a run.
     """
     def git(*a):
         return subprocess.run(["git", *a], cwd=REPO, capture_output=True, text=True).stdout.strip()
-    dirty = git("status", "--porcelain", "--", ".", ":(exclude,glob)animats/*/runs/**")
+    dirty = git("status", "--porcelain", "--", ".", ":(exclude,glob)animats/*/runs/**",
+                ":(exclude)animats/notebooks")
     return {"commit": git("rev-parse", "HEAD"), "dirty": bool(dirty)}

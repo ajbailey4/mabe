@@ -2,8 +2,13 @@
 """Run independent evolutionary runs (one per seed) for a task, in parallel.
 
 Each seed runs MABE in animats/<task>/runs/seed_NN/ with that task's configs and
-GLOBAL-randomSeed = NN. A run is finished once run_info.json exists; finished seeds
-are skipped unless --force is given. Unfinished seed directories are cleared and rerun.
+GLOBAL-randomSeed = NN. A run is finished once run_info.json exists, which is written only
+after MABE completes; finished seeds are skipped unless --force is given. A seed directory
+without it (e.g. after Ctrl-C) is cleared and the run restarts from scratch, since MABE
+can't resume a run. Which seeds will be skipped and which restarted is printed at launch.
+
+Ctrl-C stops the running seeds, starts no new ones, and exits as killed by Ctrl-C, so a
+shell loop over tasks stops too.
 
 Progress: in a terminal, each running seed gets a progress bar that updates in place.
 When output goes to a file (e.g. nohup), a status summary is printed every 10 minutes
@@ -23,9 +28,9 @@ import shutil
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from common import REPO, config_args, config_value, git_state, parse_seeds, run_mabe, seed_dir
+from common import (REPO, config_args, config_value, exit_interrupted, format_seeds, git_state,
+                    parse_seeds, run_mabe, run_parallel, seed_dir)
 
 
 def evolve(task, seed, updates, force, progress, git):
@@ -186,21 +191,39 @@ def main():
               "so commit config changes before real runs", file=sys.stderr)
 
     seeds = parse_seeds(args.seeds)
+    finished = [s for s in seeds if (seed_dir(args.task, s) / "run_info.json").exists()]
+    unfinished = [s for s in seeds if seed_dir(args.task, s).exists() and s not in finished]
+    if finished:
+        print(f"{args.task}: seeds {format_seeds(finished)} already finished, "
+              + ("rerunning them (--force)" if args.force else "skipping them"))
+    if unfinished:
+        print(f"{args.task}: seeds {format_seeds(unfinished)} have output from an unfinished run, "
+              "which will be deleted and rerun from scratch")
+
     total = args.updates if args.updates is not None else int(config_value(args.task, "GLOBAL", "updates"))
     progress = Progress(args.task, len(seeds), total)
     drawer = threading.Thread(target=progress.loop, daemon=True)
     drawer.start()
 
     failed = []
-    with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(evolve, args.task, s, args.updates, args.force, progress, git): s for s in seeds}
-        for f in as_completed(futures):
-            seed = futures[f]
-            try:
-                progress.finished(seed, f.result())
-            except Exception as e:
-                failed.append(seed)
-                progress.finished(seed, f"FAILED: {e}", failed=True)
+
+    def report(seed, message, error):
+        if error:
+            failed.append(seed)
+            progress.finished(seed, f"FAILED: {error}", failed=True)
+        else:
+            progress.finished(seed, message)
+
+    try:
+        run_parallel(lambda s: evolve(args.task, s, args.updates, args.force, progress, git),
+                     seeds, args.jobs, report)
+    except KeyboardInterrupt:
+        stopped = sorted(progress.running)
+        progress.stop.set()
+        drawer.join()
+        print(f"\ncancelled. Stopped mid-run (will restart from scratch next time): "
+              f"{format_seeds(stopped) or 'none'}", flush=True)
+        exit_interrupted()
     progress.stop.set()
     drawer.join()
     if failed:
