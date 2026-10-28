@@ -155,6 +155,16 @@ python3 animats/scripts/evolve.py task1 --seeds 1-50 --jobs 10      # MABE run m
   complex exists, the latter validates the whole-brain state and raises
   `StateUnreachableForwardsError` on unreachable states. Under IIT 3.0, `complexes()` skips
   overlapping candidates tied for top Φ as indeterminate (pyphi has no IIT 3.0 tie-break).
+- **Paper Fig. 3 measures** (`animats/scripts/iit3.py`, used by the notebook): whole-brain
+  #concepts and Σφ^Max, and the main complex's #elements, #concepts and Φ^Max, per
+  brain-state, in parallel worker processes, cached in `notebooks/output/iit3_cache.csv`. On
+  IIT 3.0 results the MC's concepts are `complex.sia.distinctions` (there is no `.ces`).
+  Whole-brain concepts are computed over hidden-node mechanisms only (identical results,
+  ~8x faster; sensors/motors can't be concepts). pyphi's `validate_system_states` is off by
+  default there, because the paper evaluates every experienced state (including the post-reset
+  state); with it on, candidate complexes whose state has no predecessor given the background
+  drop out, which changed Φ in 8 of 150 sampled brain-states. The older `phi_iit3_*` notebook
+  results kept the check on. ~75 min with 10 workers for all four tasks (315k brain-states).
 
 MABE gotchas found while building this (all handled in extract.py):
 - TPM_GENERATOR and other analysis worlds need `GLOBAL-mode analyze`. In `run` mode MABE
@@ -197,7 +207,10 @@ experienced during the 128 test trials, weighted by probability of occurrence.
   all of them because `git_state()` used to count the runs' own untracked output; fixed
   since, and the tree was in fact clean at the seeds 13–50 launch.
 - **Tasks 2–4**: share task 1's settings; only the block patterns differ (task 2's avoid
-  patterns duplicated to make 128 trials). Smoke-tested end to end.
+  patterns duplicated to make 128 trials). All 50 seeds evolved and extracted.
+- **Analysis**: the notebook reproduces the paper's Fig. 3 (whole brain and main complex, with
+  the fitness-matched subsets of tasks 3 and 4). Per-LOD Φ^Max is bimodal (most LODs end at 0,
+  a few near 1), which is what makes the SEM bands wide; the paper's are similar in size.
 - **Throughput** (Ryzen 5 9600X, 6 cores/12 threads): one full run is ~1.8 h with 6 in
   parallel, ~3.2–3.6 h with 12–13 in parallel; SMT adds only ~16% throughput. `--jobs 13`
   splits 38 or 50 seeds into near-equal waves; 50 seeds take ~13.5 h.
