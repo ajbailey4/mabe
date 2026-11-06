@@ -64,3 +64,33 @@ def load_animat(task, seed, generation):
 def to_substrate(animat):
     """A pyphi.Substrate built from the animat's TPM, connectivity matrix and node labels."""
     return pyphi.Substrate(animat["tpm"], cm=animat["cm"], node_labels=animat["node_labels"])
+
+
+def with_motor_outputs(animat):
+    """The animat with real motor TPM columns and its motors' actual outputs in every state.
+
+    extract.py saves motor TPM columns as 0.5 and motor states as 0 (see its Conventions). That
+    hides every effect of a hidden node on a motor, which lowered whole-brain #concepts and Σφ
+    by 12-31% on a 200-state sample (IIT 3.0) and made the paper's values unreachable. Here the
+    motor columns are the brain's real outputs (motor_tpm, cm inferred again), and the motors in
+    each recorded step are set to what the brain output at that step: motor_tpm of the previous
+    step, or 0 at a trial's first step (right after the reset). With zeroed motors and real
+    columns, many states would have no possible predecessor, which IIT 4.0 cannot analyse.
+
+    Returns a copy with tpm, cm, activity, visited_states, visited_counts and visited_probs
+    replaced. Sensor columns stay 0.5: nothing in the brain drives the sensors.
+    """
+    from extract import infer_cm  # extract.py holds the pipeline's TPM helpers
+
+    motors = [i for i, label in enumerate(animat["node_labels"]) if label.startswith("M")]
+    tpm = animat["tpm"].copy()
+    tpm[:, motors] = animat["motor_tpm"]
+    activity = animat["activity"].copy()
+    trial = animat["activity_trial"]
+    continues = np.r_[False, trial[1:] == trial[:-1]]  # step has a previous step in its trial
+    previous = activity[:-1] @ (1 << np.arange(activity.shape[1]))  # little-endian state index
+    activity[:, motors] = 0
+    activity[np.ix_(continues, motors)] = animat["motor_tpm"][previous[continues[1:]]]
+    visited, counts = np.unique(activity, axis=0, return_counts=True)
+    return {**animat, "tpm": tpm, "cm": infer_cm(tpm), "activity": activity,
+            "visited_states": visited, "visited_counts": counts, "visited_probs": counts / counts.sum()}

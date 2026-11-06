@@ -1,0 +1,23 @@
+# Python environment for the animat analysis (animats/scripts, animats/notebooks).
+# Not a package: `uv sync` builds .venv from uv.lock, so every machine gets the same versions.
+# The analysis caches in animats/notebooks/output/ are shared across machines, so update pyphi
+# (the rev below) deliberately, then `uv lock` and commit both files.
+[project]
+name = "mabe-animats"
+version = "0"
+requires-python = ">=3.13"  # pyphi 2.0
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "ipykernel",
+    "jupyterlab",
+    "pyphi[emd]",  # emd (POT) is required for IIT 3.0
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# pyphi 2.0 is not on PyPI
+pyphi = { git = "https://github.com/wmayner/pyphi", rev = "134a8f31b49db512322465ed3ba5da7194d362fd" }
